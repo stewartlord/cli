@@ -537,7 +537,7 @@ func (a *API) GetOrgMemberCodespace(ctx context.Context, orgName string, userNam
 // If the codespace is not found, an error is returned.
 // If includeConnection is true, it will return the connection information for the codespace.
 func (a *API) GetCodespace(ctx context.Context, codespaceName string, includeConnection bool) (*Codespace, error) {
-	resp, err := a.withRetry(func() (*http.Response, error) {
+	resp, err := a.withRetry(func(isRetry bool) (*http.Response, error) {
 		u, err := safeurl.JoinPathWithHostPrefix(a.githubAPI, "user", "codespaces", codespaceName)
 		if err != nil {
 			return nil, err
@@ -557,6 +557,9 @@ func (a *API) GetCodespace(ctx context.Context, codespaceName string, includeCon
 			req.URL.RawQuery = q.Encode()
 		}
 		a.setHeaders(req)
+		if isRetry {
+			req.Header.Set(api.IsRetryHeader, "true")
+		}
 		return a.do(ctx, req, "/user/codespaces/*")
 	})
 	if err != nil {
@@ -584,7 +587,7 @@ func (a *API) GetCodespace(ctx context.Context, codespaceName string, includeCon
 // StartCodespace starts a codespace for the user.
 // If the codespace is already running, the returned error from the API is ignored.
 func (a *API) StartCodespace(ctx context.Context, codespaceName string) error {
-	resp, err := a.withRetry(func() (*http.Response, error) {
+	resp, err := a.withRetry(func(isRetry bool) (*http.Response, error) {
 		u, err := safeurl.JoinPathWithHostPrefix(a.githubAPI, "user", "codespaces", codespaceName, "start")
 		if err != nil {
 			return nil, err
@@ -598,6 +601,9 @@ func (a *API) StartCodespace(ctx context.Context, codespaceName string) error {
 			return nil, fmt.Errorf("error creating request: %w", err)
 		}
 		a.setHeaders(req)
+		if isRetry {
+			req.Header.Set(api.IsRetryHeader, "true")
+		}
 		return a.do(ctx, req, "/user/codespaces/*/start")
 	})
 	if err != nil {
@@ -1296,10 +1302,13 @@ func (a *API) setHeaders(req *http.Request) {
 
 // withRetry takes a generic function that sends an http request and retries
 // only when the returned response has a >=500 status code.
-func (a *API) withRetry(f func() (*http.Response, error)) (*http.Response, error) {
+func (a *API) withRetry(f func(isRetry bool) (*http.Response, error)) (*http.Response, error) {
 	bo := backoff.NewConstantBackOff(a.retryBackoff)
+	attempt := 0
 	return backoff.RetryWithData(func() (*http.Response, error) {
-		resp, err := f()
+		isRetry := attempt > 0
+		attempt++
+		resp, err := f(isRetry)
 		if err != nil {
 			return nil, backoff.Permanent(err)
 		}
