@@ -53,6 +53,9 @@ func (err HTTPError) ScopesSuggestion() string {
 	return err.scopesSuggestion
 }
 
+// IsRetryHeader is sent with the value "true" on retry attempts so that GitHub can identify retry traffic.
+const IsRetryHeader = "X-Is-Retry"
+
 // RequestOption configures a single request made through Request, RequestWithContext or GraphQL.
 type RequestOption func(*requestConfig)
 
@@ -154,25 +157,41 @@ func (c Client) QueryWithContext(ctx context.Context, hostname, name string, que
 }
 
 // REST performs a REST request and parses the response.
-func (c Client) REST(hostname string, method string, p string, body io.Reader, data any) error {
-	opts := clientOptions(hostname, c.http.Transport)
-	restClient, err := ghAPI.NewRESTClient(opts)
+func (c Client) REST(hostname string, method string, p string, body io.Reader, data any, opts ...RequestOption) error {
+	cfg := newRequestConfig(opts)
+	clientOpts := clientOptions(hostname, c.http.Transport)
+	maps.Copy(clientOpts.Headers, cfg.headers)
+	if cfg.noFollowRedirects {
+		clientOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
+
+	restClient, err := ghAPI.NewRESTClient(clientOpts)
 	if err != nil {
 		return err
 	}
-	return handleResponse(restClient.Do(method, p, body, data))
+	return handleRequestError(restClient.Do(method, p, body, data), cfg.endpointScopes)
 }
 
-func (c Client) RESTWithNext(hostname string, method string, p string, body io.Reader, data any) (string, error) {
-	opts := clientOptions(hostname, c.http.Transport)
-	restClient, err := ghAPI.NewRESTClient(opts)
+func (c Client) RESTWithNext(hostname string, method string, p string, body io.Reader, data any, opts ...RequestOption) (string, error) {
+	cfg := newRequestConfig(opts)
+	clientOpts := clientOptions(hostname, c.http.Transport)
+	maps.Copy(clientOpts.Headers, cfg.headers)
+	if cfg.noFollowRedirects {
+		clientOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
+
+	restClient, err := ghAPI.NewRESTClient(clientOpts)
 	if err != nil {
 		return "", err
 	}
 
 	resp, err := restClient.Request(method, p, body)
 	if err != nil {
-		return "", handleResponse(err)
+		return "", handleRequestError(err, cfg.endpointScopes)
 	}
 	defer resp.Body.Close()
 

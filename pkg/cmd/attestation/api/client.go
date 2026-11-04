@@ -54,8 +54,8 @@ func (p *FetchParams) Validate() error {
 
 // githubApiClient makes REST calls to the GitHub API
 type githubApiClient interface {
-	REST(hostname, method, p string, body io.Reader, data any) error
-	RESTWithNext(hostname, method, p string, body io.Reader, data any) (string, error)
+	REST(hostname, method, p string, body io.Reader, data any, opts ...api.RequestOption) error
+	RESTWithNext(hostname, method, p string, body io.Reader, data any, opts ...api.RequestOption) (string, error)
 }
 
 // httpClient makes HTTP calls to all non-GitHub API endpoints
@@ -150,8 +150,14 @@ func (c *LiveClient) getAttestations(params FetchParams) ([]*Attestation, error)
 
 	// if no attestation or less than limit, then keep fetching
 	for pageURL.String() != "" && len(attestations) < params.Limit {
+		attempt := 0
 		err := backoff.Retry(func() error {
-			newURL, restErr := c.githubAPI.RESTWithNext(c.host, http.MethodGet, pageURL.String(), nil, &resp)
+			var opts []api.RequestOption
+			if attempt > 0 {
+				opts = append(opts, api.WithHeader(api.IsRetryHeader, "true"))
+			}
+			attempt++
+			newURL, restErr := c.githubAPI.RESTWithNext(c.host, http.MethodGet, pageURL.String(), nil, &resp, opts...)
 			if restErr != nil {
 				if shouldRetry(restErr) {
 					return restErr
@@ -300,8 +306,14 @@ func (c *LiveClient) getTrustDomain(u safeurl.SafeURL) (string, error) {
 	var resp MetaResponse
 
 	bo := backoff.NewConstantBackOff(getAttestationRetryInterval)
+	attempt := 0
 	err := backoff.Retry(func() error {
-		restErr := c.githubAPI.REST(c.host, http.MethodGet, u.String(), nil, &resp)
+		var opts []api.RequestOption
+		if attempt > 0 {
+			opts = append(opts, api.WithHeader(api.IsRetryHeader, "true"))
+		}
+		attempt++
+		restErr := c.githubAPI.REST(c.host, http.MethodGet, u.String(), nil, &resp, opts...)
 		if restErr != nil {
 			if shouldRetry(restErr) {
 				return restErr

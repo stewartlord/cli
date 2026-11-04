@@ -17,11 +17,11 @@ type mockAPIClient struct {
 	OnREST         func(hostname, method, p string, body io.Reader, data any) error
 }
 
-func (m mockAPIClient) RESTWithNext(hostname, method, p string, body io.Reader, data any) (string, error) {
+func (m mockAPIClient) RESTWithNext(hostname, method, p string, body io.Reader, data any, _ ...cliAPI.RequestOption) (string, error) {
 	return m.OnRESTWithNext(hostname, method, p, body, data)
 }
 
-func (m mockAPIClient) REST(hostname, method, p string, body io.Reader, data any) error {
+func (m mockAPIClient) REST(hostname, method, p string, body io.Reader, data any, _ ...cliAPI.RequestOption) error {
 	return m.OnREST(hostname, method, p, body, data)
 }
 
