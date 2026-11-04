@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"slices"
 	"testing"
 
 	"github.com/cli/cli/v2/internal/safeurl"
@@ -82,8 +83,10 @@ func Test_uploadWithDelete_retry(t *testing.T) {
 	ctx := context.Background()
 
 	tries := 0
+	var isRetryHeaders [][]string
 	client := &http.Client{Transport: funcTripper(func(req *http.Request) (*http.Response, error) {
 		tries++
+		isRetryHeaders = append(isRetryHeaders, req.Header.Values("X-Is-Retry"))
 		if tries == 1 {
 			return nil, errors.New("made up exception")
 		} else if tries == 2 {
@@ -113,6 +116,17 @@ func Test_uploadWithDelete_retry(t *testing.T) {
 	}
 	if tries != 3 {
 		t.Errorf("tries = %d, expected %d", tries, 3)
+	}
+	if len(isRetryHeaders) != 3 {
+		t.Fatalf("recorded headers for %d tries, expected %d", len(isRetryHeaders), 3)
+	}
+	if len(isRetryHeaders[0]) != 0 {
+		t.Errorf("try 1 X-Is-Retry = %q, expected none", isRetryHeaders[0])
+	}
+	for i, got := range isRetryHeaders[1:] {
+		if !slices.Equal(got, []string{"true"}) {
+			t.Errorf("try %d X-Is-Retry = %q, expected %q", i+2, got, []string{"true"})
+		}
 	}
 }
 

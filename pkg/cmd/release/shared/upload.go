@@ -145,8 +145,11 @@ func uploadWithDelete(ctx context.Context, httpClient *http.Client, hostname str
 		}
 	}
 	bo := backoff.NewConstantBackOff(retryInterval)
+	attempt := 0
 	return backoff.Retry(func() error {
-		_, err := uploadAsset(ctx, httpClient, uploadURL, a)
+		isRetry := attempt > 0
+		attempt++
+		_, err := uploadAsset(ctx, httpClient, uploadURL, a, isRetry)
 		if err == nil || shouldRetry(err) {
 			return err
 		}
@@ -154,7 +157,7 @@ func uploadWithDelete(ctx context.Context, httpClient *http.Client, hostname str
 	}, backoff.WithContext(backoff.WithMaxRetries(bo, 3), ctx))
 }
 
-func uploadAsset(ctx context.Context, httpClient *http.Client, uploadURL safeurl.SafeURL, asset AssetForUpload) (*ReleaseAsset, error) {
+func uploadAsset(ctx context.Context, httpClient *http.Client, uploadURL safeurl.SafeURL, asset AssetForUpload, isRetry bool) (*ReleaseAsset, error) {
 	u, err := url.Parse(uploadURL.String())
 	if err != nil {
 		return nil, err
@@ -179,6 +182,7 @@ func uploadAsset(ctx context.Context, httpClient *http.Client, uploadURL safeurl
 	}
 	req.ContentLength = asset.Size
 	req.Header.Set("Content-Type", asset.MIMEType)
+	api.SetIsRetry(req, isRetry)
 	req.GetBody = asset.Open
 
 	// DoRequest rather than Request because ContentLength and GetBody are set on the request

@@ -9,6 +9,7 @@ import (
 	"github.com/cli/cli/v2/pkg/cmd/attestation/io"
 	"github.com/cli/cli/v2/pkg/cmd/attestation/test/data"
 	"github.com/cli/cli/v2/pkg/httpmock"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -418,6 +419,44 @@ func TestGetAttestationsRetriesRESTWithNextError(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, attestations, 1)
 	require.Len(t, reg.Requests, 2)
+	assert.Empty(t, reg.Requests[0].Header.Values("X-Is-Retry"))
+	assert.Equal(t, "true", reg.Requests[1].Header.Get("X-Is-Retry"))
+}
+
+func TestGetTrustDomainRetries(t *testing.T) {
+	originalRetryInterval := getAttestationRetryInterval
+	getAttestationRetryInterval = 0
+	t.Cleanup(func() {
+		getAttestationRetryInterval = originalRetryInterval
+	})
+
+	reg := &httpmock.Registry{}
+	defer reg.Verify(t)
+	reg.Register(
+		httpmock.REST(http.MethodGet, MetaPath),
+		httpmock.StatusStringResponse(http.StatusInternalServerError, `{"message":"Internal Server Error"}`),
+	)
+	reg.Register(
+		httpmock.REST(http.MethodGet, MetaPath),
+		httpmock.JSONResponse(map[string]any{
+			"domains": map[string]any{
+				"artifact_attestations": map[string]any{"trust_domain": "foo"},
+			},
+		}),
+	)
+
+	c := &LiveClient{
+		githubAPI: cliAPI.NewClientFromHTTP(&http.Client{Transport: reg}),
+		host:      "github.com",
+		logger:    io.NewTestHandler(),
+	}
+	td, err := c.GetTrustDomain()
+
+	require.NoError(t, err)
+	assert.Equal(t, "foo", td)
+	require.Len(t, reg.Requests, 2)
+	assert.Empty(t, reg.Requests[0].Header.Values("X-Is-Retry"))
+	assert.Equal(t, "true", reg.Requests[1].Header.Get("X-Is-Retry"))
 }
 
 // test total retries

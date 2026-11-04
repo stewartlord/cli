@@ -53,7 +53,8 @@ func (err HTTPError) ScopesSuggestion() string {
 	return err.scopesSuggestion
 }
 
-// RequestOption configures a single request made through Request, RequestWithContext or GraphQL.
+// RequestOption configures a single request made through REST, RESTWithNext, Request,
+// RequestWithContext or GraphQL.
 type RequestOption func(*requestConfig)
 
 // requestConfig accumulates the effect of the RequestOptions applied to one request.
@@ -78,8 +79,9 @@ func WithHeader(name, value string) RequestOption {
 // GET or HEAD (e.g. DELETE) into a GET when it follows a 301/302/303, so a caller deleting a renamed
 // resource would receive a success response while having deleted nothing.
 //
-// This option applies only to the REST request surface (Request and RequestWithContext). It has no
-// effect on GraphQL methods, which do not encounter redirects in practice.
+// This option applies only to the REST request surface (REST, RESTWithNext, Request and
+// RequestWithContext). It has no effect on GraphQL methods, which do not encounter redirects in
+// practice.
 func WithoutFollowingRedirects() RequestOption {
 	return func(cfg *requestConfig) {
 		cfg.noFollowRedirects = true
@@ -154,25 +156,27 @@ func (c Client) QueryWithContext(ctx context.Context, hostname, name string, que
 }
 
 // REST performs a REST request and parses the response.
-func (c Client) REST(hostname string, method string, p string, body io.Reader, data any) error {
-	opts := clientOptions(hostname, c.http.Transport)
-	restClient, err := ghAPI.NewRESTClient(opts)
+func (c Client) REST(hostname string, method string, p string, body io.Reader, data any, opts ...RequestOption) error {
+	cfg := newRequestConfig(opts)
+	restClient, err := c.newRESTClient(hostname, cfg)
 	if err != nil {
 		return err
 	}
-	return handleResponse(restClient.Do(method, p, body, data))
+	return handleRequestError(restClient.Do(method, p, body, data), cfg.endpointScopes)
 }
 
-func (c Client) RESTWithNext(hostname string, method string, p string, body io.Reader, data any) (string, error) {
-	opts := clientOptions(hostname, c.http.Transport)
-	restClient, err := ghAPI.NewRESTClient(opts)
+// RESTWithNext performs a REST request, parses the response, and returns the URL of the next page
+// from the Link header, or an empty string when there is none.
+func (c Client) RESTWithNext(hostname string, method string, p string, body io.Reader, data any, opts ...RequestOption) (string, error) {
+	cfg := newRequestConfig(opts)
+	restClient, err := c.newRESTClient(hostname, cfg)
 	if err != nil {
 		return "", err
 	}
 
 	resp, err := restClient.Request(method, p, body)
 	if err != nil {
-		return "", handleResponse(err)
+		return "", handleRequestError(err, cfg.endpointScopes)
 	}
 	defer resp.Body.Close()
 
@@ -220,15 +224,7 @@ func (c Client) Request(hostname string, method string, p string, body io.Reader
 // the response is returned unread and the caller is responsible for closing its body.
 func (c Client) RequestWithContext(ctx context.Context, hostname string, method string, p string, body io.Reader, opts ...RequestOption) (*http.Response, error) {
 	cfg := newRequestConfig(opts)
-	clientOpts := clientOptions(hostname, c.http.Transport)
-	maps.Copy(clientOpts.Headers, cfg.headers)
-	if cfg.noFollowRedirects {
-		clientOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		}
-	}
-
-	restClient, err := ghAPI.NewRESTClient(clientOpts)
+	restClient, err := c.newRESTClient(hostname, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -239,6 +235,18 @@ func (c Client) RequestWithContext(ctx context.Context, hostname string, method 
 	}
 
 	return resp, nil
+}
+
+// newRESTClient builds a go-gh REST client for hostname with the headers and redirect policy of cfg.
+func (c Client) newRESTClient(hostname string, cfg requestConfig) (*ghAPI.RESTClient, error) {
+	clientOpts := clientOptions(hostname, c.http.Transport)
+	maps.Copy(clientOpts.Headers, cfg.headers)
+	if cfg.noFollowRedirects {
+		clientOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+	}
+	return ghAPI.NewRESTClient(clientOpts)
 }
 
 // DoRequest sends a request that the caller has already built, and returns the response for the

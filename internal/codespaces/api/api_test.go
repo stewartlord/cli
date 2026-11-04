@@ -536,8 +536,10 @@ func runRepoSearchTest(t *testing.T, searchText, wantQueryText, wantSort, wantMa
 
 func TestRetries(t *testing.T) {
 	var callCount int
+	var isRetryHeaders [][]string
 	csName := "test_codespace"
 	handler := func(w http.ResponseWriter, r *http.Request) {
+		isRetryHeaders = append(isRetryHeaders, r.Header.Values("X-Is-Retry"))
 		if callCount == 3 {
 			err := json.NewEncoder(w).Encode(Codespace{
 				Name: csName,
@@ -566,8 +568,14 @@ func TestRetries(t *testing.T) {
 	if cs.Name != csName {
 		t.Fatalf("expected codespace name to be %q but got %q", csName, cs.Name)
 	}
+	wantHeaders := [][]string{nil, {"true"}, {"true"}, {"true"}}
+	if !reflect.DeepEqual(isRetryHeaders, wantHeaders) {
+		t.Fatalf("expected X-Is-Retry headers %q but got %q", wantHeaders, isRetryHeaders)
+	}
 	callCount = 0
-	handler = func(w http.ResponseWriter, _ *http.Request) {
+	isRetryHeaders = nil
+	handler = func(w http.ResponseWriter, r *http.Request) {
+		isRetryHeaders = append(isRetryHeaders, r.Header.Values("X-Is-Retry"))
 		callCount++
 		err := json.NewEncoder(w).Encode(Codespace{
 			Name: csName,
@@ -585,6 +593,9 @@ func TestRetries(t *testing.T) {
 	}
 	if cs.Name != csName {
 		t.Fatalf("expected codespace name to be %q but got %q", csName, cs.Name)
+	}
+	if len(isRetryHeaders) != 1 || len(isRetryHeaders[0]) != 0 {
+		t.Fatalf("expected a single request without X-Is-Retry but got %q", isRetryHeaders)
 	}
 }
 
