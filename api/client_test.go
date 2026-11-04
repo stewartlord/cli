@@ -110,6 +110,24 @@ func TestRESTWithFullURL(t *testing.T) {
 	assert.Equal(t, "another.net", http.Requests[1].URL.Hostname())
 }
 
+func TestRESTAndRESTWithNextApplyRequestOptions(t *testing.T) {
+	reg := &httpmock.Registry{}
+	defer reg.Verify(t)
+	client := newTestClient(reg)
+
+	reg.Register(httpmock.REST(http.MethodGet, "user"), httpmock.StringResponse(`{}`))
+	reg.Register(httpmock.REST(http.MethodGet, "user"), httpmock.StringResponse(`{}`))
+
+	err := client.REST("github.com", http.MethodGet, "user", nil, nil, WithHeader("X-Test", "rest"))
+	require.NoError(t, err)
+	_, err = client.RESTWithNext("github.com", http.MethodGet, "user", nil, nil, WithHeader("X-Test", "rest-with-next"))
+	require.NoError(t, err)
+
+	require.Len(t, reg.Requests, 2)
+	assert.Equal(t, "rest", reg.Requests[0].Header.Get("X-Test"))
+	assert.Equal(t, "rest-with-next", reg.Requests[1].Header.Get("X-Test"))
+}
+
 func TestRESTError(t *testing.T) {
 	fakehttp := &httpmock.Registry{}
 	client := newTestClient(fakehttp)
